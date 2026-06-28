@@ -12,6 +12,14 @@
 #define MENGINE_SUBST_MEMO 1
 #endif
 
+// Must match the default in expression.c: MENGINE_HASHCONS gates whether APP
+// nodes are structurally shared.  When sharing is on, a single APP node may have
+// many parents, so spine_rebuild must not strip a still-shared node's child
+// uplinks (see the APP case below).
+#ifndef MENGINE_HASHCONS
+#define MENGINE_HASHCONS 1
+#endif
+
 #define CLEAR_CHILD_UPLINK(child_expr, uplink_field)         \
     do {                                                     \
         remove_uplink_by_node((child_expr), (uplink_field)); \
@@ -553,8 +561,22 @@ static Expression *spine_rebuild(Context *apps_ctx, Expression *node, Map *subst
             Expression *arg = get_app_arg(node);
             Expression *func2 = maybe_rebuild(apps_ctx, func, subst_map, memo, subtree_gen);
             Expression *arg2 = maybe_rebuild(apps_ctx, arg, subst_map, memo, subtree_gen);
+            // Dismantling `node`'s child edges is only safe when `node` is the
+            // sole owner being replaced here.  Under MENGINE_HASHCONS an APP node
+            // can be shared by many parents; clearing its child uplinks would
+            // strip edges the other live parents still depend on (a later
+            // mark_spine_from walk up child->parent would then miss occurrences).
+            // `node`'s incoming edge from its own parent is still present at this
+            // point, so uplink_count == 1 means it has exactly one parent.
+#if MENGINE_HASHCONS
+            if (node->uplink_count <= 1) {
+                CLEAR_CHILD_UPLINK(func, node->as.app.func_uplink_node);
+                CLEAR_CHILD_UPLINK(arg, node->as.app.arg_uplink_node);
+            }
+#else
             CLEAR_CHILD_UPLINK(func, node->as.app.func_uplink_node);
             CLEAR_CHILD_UPLINK(arg, node->as.app.arg_uplink_node);
+#endif
             if (forms_beta_redex(func2, arg2)) {
                 result = beta_reduce(apps_ctx, func2, arg2);
             } else {

@@ -23,6 +23,13 @@
 #define MENGINE_EVAR_FREE_FILL 1
 #endif
 
+#ifndef MENGINE_HASHCONS
+#define MENGINE_HASHCONS 1
+// Defined with the other APP hash-consing helpers below; forward-declared here
+// because expression_gc_shutdown (above them) calls it.
+static void app_hashcons_clear(void);
+#endif
+
 // Arena allocator for Expression nodes.
 // Each page holds ~64 KiB of node payload (exact count falls out of
 // sizeof(Expression), so it stays calibrated if the struct changes).
@@ -304,6 +311,9 @@ static void gc_free_node(Expression *expr, PtrSet *freed) {
 void expression_gc_shutdown(void) {
     inductive_registry_shutdown();
     conversion_cache_clear();
+#if MENGINE_HASHCONS
+    app_hashcons_clear();
+#endif
 
     PtrSet freed;
     ptrset_init(&freed);
@@ -507,6 +517,54 @@ Expression *init_lambda_expression_wc(Expression *bound_variable, Expression *bo
     return expr;
 }
 
+#if MENGINE_HASHCONS
+// ── APP hash-consing ────────────────────────────────────────────────────────
+// Structurally-identical applications are collapsed to one shared node so
+// conversion's pointer-equality fast path and the pointer-keyed conversion
+// caches fire across a proof.  Because consing is bottom-up, an APP's children
+// are already canonical, so the key is just the (func, arg) pointer pair (which
+// also uniquely determines the node's minimal context and type).  Only evar-free
+// APPs are consed: the only mutable nodes (holes, and anything fill_hole
+// rewrites) carry has_evar and are excluded, so every consed node is
+// immutable-content and pointer-stable for the rest of the run (the arena never
+// frees a node mid-run).  Nested map: func ptr -> (arg ptr -> canonical node).
+static Map *g_app_hashcons = NULL;
+
+static Expression *app_hashcons_lookup(Expression *func, Expression *arg) {
+    if (g_app_hashcons == NULL) {
+        return NULL;
+    }
+    Map *inner = (Map *)map_get(g_app_hashcons, func);
+    if (inner == NULL) {
+        return NULL;
+    }
+    return (Expression *)map_get(inner, arg);
+}
+
+static void app_hashcons_insert(Expression *func, Expression *arg, Expression *node) {
+    if (g_app_hashcons == NULL) {
+        g_app_hashcons = map_new_with_capacity(64);
+    }
+    Map *inner = (Map *)map_get(g_app_hashcons, func);
+    if (inner == NULL) {
+        inner = map_new_with_capacity(4);
+        map_set(g_app_hashcons, func, inner);
+    }
+    map_set(inner, arg, node);
+}
+
+static void app_hashcons_free_inner(void *inner) { map_free((Map *)inner); }
+
+static void app_hashcons_clear(void) {
+    if (g_app_hashcons != NULL) {
+        // Frees only the (inner/outer) map structures; the canonical Expression
+        // values are arena-owned and freed by the arena page walk below.
+        map_clear_apply_free(g_app_hashcons, app_hashcons_free_inner);
+        g_app_hashcons = NULL;
+    }
+}
+#endif
+
 Expression *init_app_expression_wc_with_known_type(Expression *func, Expression *arg,
                                                    Context *context, Expression *type) {
     Expression *expr = _init_expression_base(
@@ -544,20 +602,43 @@ Expression *init_app_expression_wc(Expression *func, Expression *arg, Context *c
         return NULL;
     }
 
-    Expression *type = _construct_app_type(context, func, arg);
+    Context *build_ctx = context;
+#if MENGINE_HASHCONS
+    // Cons only evar-free apps (immutable; fill_hole only rewrites has_evar
+    // nodes).  A cached node is built in some real ambient context and stored
+    // verbatim (never a fabricated/tightened context); it is reused only when it
+    // is valid in the caller's context, so the caller always gets a node whose
+    // context is an ancestor of (or equal to) its own — exactly what the
+    // substitution engine already does when it shares unchanged subterms.
+    bool consable = !func->has_evar && !arg->has_evar;
+    if (consable) {
+        Expression *hit = app_hashcons_lookup(func, arg);
+        if (hit != NULL && valid_in_context(hit, context)) {
+            return hit;
+        }
+    }
+#endif
+
+    Expression *type = _construct_app_type(build_ctx, func, arg);
     if (!type) {
         return NULL;
     }
 
     Expression *expr = _init_expression_base(
-        /* tag */ APP_EXPRESSION, /* context */ context,
-        /* ctx_size */ context->ctx_size,
+        /* tag */ APP_EXPRESSION, /* context */ build_ctx,
+        /* ctx_size */ build_ctx->ctx_size,
         /* type */ type);
 
     SET_APP_FUNC(expr, func);
     SET_APP_ARG(expr, arg);
     propagate_evar_refs(expr, func);
     propagate_evar_refs(expr, arg);
+
+#if MENGINE_HASHCONS
+    if (consable) {
+        app_hashcons_insert(func, arg, expr);
+    }
+#endif
 
     return expr;
 }

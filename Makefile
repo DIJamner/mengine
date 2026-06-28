@@ -15,6 +15,9 @@ TUNE_USE_LL ?= 0
 # - evar-ref shortcut for hole occurs checks (default on): TUNE_EVAR_FREE_FILL=1
 TUNE_EVAR_FREE_FILL ?= 1
 
+# - structural sharing (hash-consing) of APP nodes (default on): TUNE_HASHCONS=1
+TUNE_HASHCONS ?= 1
+
 TUNE_FLAGS ?=
 
 ifeq ($(TUNE_USE_LL), 1)
@@ -23,6 +26,10 @@ endif
 
 ifeq ($(TUNE_EVAR_FREE_FILL), 0)
 	override TUNE_FLAGS += -DMENGINE_EVAR_FREE_FILL=0
+endif
+
+ifeq ($(TUNE_HASHCONS), 0)
+	override TUNE_FLAGS += -DMENGINE_HASHCONS=0
 endif
 
 CFLAGS = -Wall -Wextra -O0 -g -march=native -I. $(TUNE_FLAGS)
@@ -142,6 +149,12 @@ ablation-binaries:
 	$(MAKE) clean
 	$(MAKE) TUNE_USE_LL=0 TUNE_SUBST_MEMO=1 TUNE_EVAR_FREE_FILL=1
 	cp $(MENGINE_BIN) build/ablations/mengine-order-demain
+	$(MAKE) clean
+	$(MAKE) TUNE_HASHCONS=1
+	cp $(MENGINE_BIN) build/ablations/mengine-hashcons
+	$(MAKE) clean
+	$(MAKE) TUNE_HASHCONS=0
+	cp $(MENGINE_BIN) build/ablations/mengine-no-hashcons
 	$(MAKE) clean
 	$(MAKE) TUNE_SUBST_MEMO=1 TUNE_EVAR_FREE_FILL=1
 
