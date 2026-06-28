@@ -1,0 +1,65 @@
+(* abstract_induction.me — demonstrates the `abstract` tactic-value primitive.
+
+   `abstract <var> <body>` builds the lambda (fun <var> => <body>), the inverse of
+   `subst`.  Its purpose is to let a tactic synthesise an eliminator's *motive*
+   from the actual goal — by abstracting the current goal type over the induction
+   variable — instead of having the motive spelled out literally in the source.
+   With it, a generic single-variable `induction`/`destruct` becomes writable in
+   the tactic language (it resolves obstacle #1 in
+   benchmarks/stdlib/DESTR_BOOL_OBSTACLES.md). *)
+
+Inductive nat : Type :=
+| O : nat
+| S : forall (n : nat), nat.
+
+Fixpoint add (n : nat) (m : nat) {struct n} : nat :=
+  match n with | O => m | S p => S (add p m) end.
+
+Inductive list (A : Type) : Type :=
+| nil  : list A
+| cons : forall (x : A), forall (l : list A), list A.
+
+Fixpoint app (A : Type) (l : list A) (k : list A) {struct l} : list A :=
+  match l with | nil _ => k | cons _ x xs => cons A x (app A xs k) end.
+
+(* Native induction: build the motive by abstracting the goal over `x`, then
+   apply the generated eliminator.  `induct` for non-parametric types (nat),
+   `inductp` threads one type parameter (list). *)
+Tactic induct x elim :=
+  let G := goal_type in
+  let m := abstract x G in
+  apply (elim m).
+
+Tactic inductp x elim p :=
+  let G := goal_type in
+  let m := abstract x G in
+  apply ((elim p) m).
+
+(* conversion-based reflexivity: close eq A x y when x and y are convertible
+   (e.g. after cbv leaves the two sides equal up to reduction, with distinct O
+   nodes the prelude's syntactic `reflexivity` cannot match). *)
+Tactic refl := match Goal with
+| [ |- (((eq ?A) ?x) ?y) ] => exact ((eq_refl A) x)
+end.
+
+(* n + 0 = n, by induction on n with a motive synthesised from the goal. *)
+Theorem add_0_r : forall (n : nat), (((eq nat) ((add n) O)) n).
+intro n.
+induct n nat_ind.
+cbv; refl.
+intro n.
+intro IHn.
+cbv; rewrite IHn with eq; refl.
+
+(* app is associative, by parametric induction on the first list. *)
+Theorem app_assoc :
+  forall (A : Type), forall (l : (list A)), forall (m : (list A)), forall (n : (list A)),
+    (((eq (list A)) (((app A) l) (((app A) m) n))) (((app A) (((app A) l) m)) n)).
+intro A.
+intro l.
+inductp l list_ind A.
+cbv; intro m; intro n; refl.
+intro x.
+intro l.
+intro IHl.
+cbv; intro m; intro n; cbv; rewrite ((IHl m) n) with eq; refl.

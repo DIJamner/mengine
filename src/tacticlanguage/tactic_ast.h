@@ -30,6 +30,7 @@ typedef enum {
     TAC_SHELVE,   // shelve                - moves current goal to back (removes from active queue)
     TAC_FILL,     // fill <hole> <term>    - fills hole with term
     TAC_SUBST,    // subst <new> <body> <old> - substitution body[old := new]
+    TAC_ABSTRACT, // abstract <var> <body> - lambda abstraction (fun var => body), the inverse of subst
     TAC_EUNIFY,   // eunify <lemma> <goal> - existential unification
     TAC_CURRENT_GOAL,   // current_goal - returns the current goal hole as a term value
     TAC_INTRO_STEP,     // intro_step [name] - introduce a forall-bound variable
@@ -138,6 +139,11 @@ typedef struct {
 } SubstTacticExpr;
 
 typedef struct {
+    AST *var;   // variable to bind (a context variable)
+    AST *body;  // body to abstract over var
+} AbstractTacticExpr;
+
+typedef struct {
     AST *lemma;  // lemma to unify against current goal
 } EunifyTacticExpr;
 
@@ -198,6 +204,7 @@ struct TacticExpr {
         MkHoleTacticExpr mk_hole;
         FillTacticExpr fill;
         SubstTacticExpr subst;
+        AbstractTacticExpr abstract;
         EunifyTacticExpr eunify;
         IntroStepTacticExpr intro_step;
         PairTacticExpr pair;
@@ -354,6 +361,14 @@ static inline TacticExpr *tactic_expr_subst(AST *new_term, AST *body, AST *old_v
     e->as.subst.new_term = new_term;
     e->as.subst.body = body;
     e->as.subst.old_var = old_var;
+    return e;
+}
+
+static inline TacticExpr *tactic_expr_abstract(AST *var, AST *body) {
+    TacticExpr *e = malloc(sizeof(TacticExpr));
+    e->tag = TAC_ABSTRACT;
+    e->as.abstract.var = var;
+    e->as.abstract.body = body;
     return e;
 }
 
@@ -529,6 +544,10 @@ static inline void free_tactic_expr(TacticExpr *expr) {
             free_ast(expr->as.subst.new_term);
             free_ast(expr->as.subst.body);
             free_ast(expr->as.subst.old_var);
+            break;
+        case TAC_ABSTRACT:
+            free_ast(expr->as.abstract.var);
+            free_ast(expr->as.abstract.body);
             break;
         case TAC_EUNIFY:
             free_ast(expr->as.eunify.lemma);

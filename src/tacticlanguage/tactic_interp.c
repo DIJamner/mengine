@@ -679,6 +679,42 @@ TacticResult *tactic_interpret(MEngineRuntime *rt, Expression *goal, TacticExpr 
             return engine_tactic_result_value(engine_tactic_value_expr(result));
         }
 
+        case TAC_ABSTRACT: {
+            // abstract <var> <body> -> (fun x' => body[var := x']).  The inverse of
+            // subst, mirroring intro_step in reverse: it reuses the existing `body`
+            // DAG node (one kernel_subst, no per-node re-elaboration) instead of
+            // rebuilding a textually-restated motive through ast_to_expression.  A
+            // fresh binder x' is used (not `var` itself) so the result is well-scoped
+            // even while `var` remains live in the proof context.  `var` must be a
+            // context variable that `body` is valid under (e.g. the most-recently
+            // introduced variable and the current goal type).
+            Context *ctx = kernel_expr_context(goal);
+            Expression *var = ast_to_expression_env(expr->as.abstract.var, ctx, env_top_ptr());
+            Expression *body = ast_to_expression_env(expr->as.abstract.body, ctx, env_top_ptr());
+            if (!var || !body) {
+                return engine_tactic_result_new(false, NULL,
+                                                "abstract: could not resolve arguments");
+            }
+            if (!kernel_expr_is_var(var)) {
+                return engine_tactic_result_new(false, NULL,
+                                                "abstract: first argument is not a variable");
+            }
+            Expression *A = kernel_expr_type(var);
+            Expression *x_prime =
+                kernel_var_create(kernel_var_name(var), A, kernel_expr_context(var));
+            Expression *body_prime = kernel_subst(x_prime, body, var, x_prime);
+            if (!body_prime) {
+                return engine_tactic_result_new(false, NULL, "abstract: substitution failed");
+            }
+            Expression *lam = kernel_lambda_create(x_prime, body_prime);
+            if (!lam) {
+                return engine_tactic_result_new(false, NULL,
+                                                "abstract: lambda creation failed (body not "
+                                                "valid under the variable)");
+            }
+            return engine_tactic_result_value(engine_tactic_value_expr(lam));
+        }
+
         case TAC_EUNIFY: {
             Context *ctx = kernel_expr_context(goal);
             Expression *lemma_expr =

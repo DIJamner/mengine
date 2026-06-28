@@ -343,6 +343,14 @@ static TacticExpr *_parse_tactic_atom(Parser *p) {
         return tactic_expr_subst(new_term, body, old_var);
     }
 
+    // abstract <var> <body> - lambda abstraction (fun var => body), inverse of subst
+    if (tok == TOK_ABSTRACT) {
+        parser_expect_consume(p, TOK_ABSTRACT);
+        AST *var = parse_atomic(p);
+        AST *body = parse_atomic(p);
+        return tactic_expr_abstract(var, body);
+    }
+
     // eunify <lemma> - existential unification against current goal
     if (tok == TOK_EUNIFY) {
         parser_expect_consume(p, TOK_EUNIFY);

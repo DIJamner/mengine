@@ -57,6 +57,7 @@ X("mk_hole", TOK_MK_HOLE, "MK_HOLE")
 X("shelve", TOK_SHELVE, "SHELVE")
 X("fill", TOK_FILL, "FILL")
 X("subst", TOK_SUBST, "SUBST")
+X("abstract", TOK_ABSTRACT, "ABSTRACT")
 X("eunify", TOK_EUNIFY, "EUNIFY")
 X("intro_step", TOK_INTRO_STEP, "INTRO_STEP")
 
